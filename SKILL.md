@@ -1,6 +1,6 @@
 ---
 name: semantic-classifier-v3
-description: "Векторный классификатор МДМ v3. Обучается на 956 эталонных примерах из Excel. Semantic search + pattern extraction."
+description: "Векторный классификатор МДМ v3. Только классификация и извлечение атрибутов — без поиска в МДМ."
 triggers:
   - "semantic-classify"
   - "классифицируй v3"
@@ -10,45 +10,43 @@ version: "3.0.0"
 
 # Semantic Classifier v3
 
-## Особенности
+## Назначение
 
-- **Semantic search** по 956 эталонам (embeddings)
-- **Majority voting** для определения класса
-- **Pattern extraction** из соседних примеров
-- **N=N validation** с возможностью дообучения
+Скилл выполняет ТОЛЬКО классификацию номенклатуры:
+- Определяет класс материала по наименованию
+- Извлекает атрибуты (диаметр, давление, тип и т.д.)
+- Работает на основе 956 эталонных примеров
 
-## Источник данных
+## Что НЕ делает
 
-Excel-файл `etalons.xlsx` с разметкой 1057 классов.
-
-## Архитектура
-
-```
-Наименование → Embeddings → Top-K эталонов → Агрегация класса → Извлечение атрибутов → Валидация
-```
+- НЕ ищет в справочнике МДМ (это отдельный скилл mdm-nomenclature)
+- НЕ возвращает коды МДМ
+- НЕ проверяет наличие в базе
 
 ## API
 
 ```python
-from semantic_classifier_v3 import SemanticClassifierV3
+from scripts.core.semantic_router_v3 import SemanticClassifierV3
 
 classifier = SemanticClassifierV3()
-result = classifier.classify("Муфта компрессионная PN16 Ду50")
+result = classifier.classify(name="Муфта компрессионная PN16 Ду50")
 
-print(result.class_name)   # "Муфта"
-print(result.confidence)   # 0.94
-print(result.attributes)   # {"тип": "компрессионная", "давление": "PN16", "диаметр": "Ду50"}
+print(result.cls)           # "Муфта"
+print(result.confidence)    # 0.94
+print(result.attributes)    # {"тип": "компрессионная", "давление": "PN16", "диаметр": "Ду50"}
 ```
 
-## Установка
+## Файлы
 
-1. Убедиться что PostgreSQL + pgvector установлены
-2. Запустить `scripts/setup_database.py`
-3. Запустить `scripts/migrate_excel.py`
+- `scripts/core/semantic_router_v3.py` — основной классификатор
+- `scripts/core/attribute_extractor_v3.py` — извлечение атрибутов
+- `scripts/core/vector_store.py` — векторное хранилище
+- `data/etalons.xlsx` — эталонные примеры (956 шт.)
+- `scripts/cli/classify.py` — CLI для тестирования
 
-## Требования
+## Использование с другими скиллами
 
-- PostgreSQL 14+
-- pgvector
-- Python 3.10+
-- sentence-transformers или Ollama
+```
+semantic-classifier-v3.classify(name) → {class, attributes, confidence}
+mdm-nomenclature.search(name)         → [коды МДМ, статусы]
+```
