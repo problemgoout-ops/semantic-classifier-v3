@@ -1,4 +1,6 @@
+.venv/
+venv/
+venv2/
 __pycache__/
 *.pyc
-*.pyo
-.DS_Store
+*.egg-info/

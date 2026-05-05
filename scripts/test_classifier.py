@@ -5,7 +5,10 @@
 """
 
 import sys
-sys.path.insert(0, '/home/clawd/.openclaw/skills/semantic-classifier-v3/scripts')
+from pathlib import Path
+
+# Добавить путь к scripts
+sys.path.insert(0, str(Path(__file__).parent))
 
 from core.semantic_router_v3 import SemanticClassifierV3
 

@@ -5,7 +5,7 @@ triggers:
   - "semantic-classify"
   - "классифицируй v3"
   - "semantic classifier"
-version: "3.0.0"
+version: "3.2.0"
 ---
 
 # Semantic Classifier v3
@@ -13,40 +13,60 @@ version: "3.0.0"
 ## Назначение
 
 Скилл выполняет ТОЛЬКО классификацию номенклатуры:
-- Определяет класс материала по наименованию
-- Извлекает атрибуты (диаметр, давление, тип и т.д.)
-- Работает на основе 956 эталонных примеров
+- Определяет класс материала по наименованию (semantic search + majority voting)
+- Извлекает атрибуты (только из входного текста, НЕ добавляет из эталонов)
+- Работает на основе 6800+ эталонных примеров в PostgreSQL+pgvector
+
+## Архитектура
+
+```
+Входное наименование
+       ↓
+OpenAI text-embedding-3-small (1536d)
+       ↓
+PostgreSQL + pgvector HNSW (Top-20 ближайших)
+       ↓
+Majority voting по корню класса (группировка)
+       ↓
+Класс + Confidence + Атрибуты
+```
+
+## Дообучение
+
+### Правила обратной связи:
+- ✅ Пользователь подтвердил → `confirm_and_learn(name, class_name)` — записать пример в базу
+- ✏️ Пользователь поправил → `confirm_and_learn(name, corrected_class)` — записать поправленный вариант
+- ❌ Пользователь ничего не сказал → НЕ записывать
+- ⚠️ Атрибуты = только то что на входе. Не добавлять из эталонов!
+
+### API дообучения:
+```python
+classifier.confirm_and_learn(name="Муфта аксиальная Ду32", class_name="Муфта аксиальная")
+```
 
 ## Что НЕ делает
 
-- НЕ ищет в справочнике МДМ (это отдельный скилл mdm-nomenclature)
+- НЕ ищет в справочнике МДМ (это mdm-nomenclature)
 - НЕ возвращает коды МДМ
-- НЕ проверяет наличие в базе
+- НЕ добавляет атрибуты из эталонов
 
-## API
+## Конфигурация
 
-```python
-from scripts.core.semantic_router_v3 import SemanticClassifierV3
-
-classifier = SemanticClassifierV3()
-result = classifier.classify(name="Муфта компрессионная PN16 Ду50")
-
-print(result.cls)           # "Муфта"
-print(result.confidence)    # 0.94
-print(result.attributes)    # {"тип": "компрессионная", "давление": "PN16", "диаметр": "Ду50"}
-```
+| Параметр | Значение |
+|----------|----------|
+| Embedding модель | OpenAI text-embedding-3-small |
+| Размерность | 1536d |
+| База данных | nomenclature_v3 |
+| Таблица | etalons |
+| Индекс | HNSW (vector_cosine_ops) |
+| Top-K | 20 соседей |
+| Fallback threshold | 0.3 |
 
 ## Файлы
 
-- `scripts/core/semantic_router_v3.py` — основной классификатор
+- `scripts/core/semantic_router_v3.py` — основной классификатор + дообучение
 - `scripts/core/attribute_extractor_v3.py` — извлечение атрибутов
-- `scripts/core/vector_store.py` — векторное хранилище
-- `data/etalons.xlsx` — эталонные примеры (956 шт.)
-- `scripts/cli/classify.py` — CLI для тестирования
-
-## Использование с другими скиллами
-
-```
-semantic-classifier-v3.classify(name) → {class, attributes, confidence}
-mdm-nomenclature.search(name)         → [коды МДМ, статусы]
-```
+- `scripts/core/vector_store.py` — PostgreSQL+pgvector хранилище (1536d)
+- `scripts/integration/wrapper.py` — обёртка для вызова извне
+- `scripts/migrate_excel.py` — миграция из Excel (OpenAI embeddings)
+- `data/etalons.xlsx` — эталонные примеры

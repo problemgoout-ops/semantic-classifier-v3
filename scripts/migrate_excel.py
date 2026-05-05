@@ -118,18 +118,22 @@ def generate_embedding(text: str, provider: str = "ollama") -> List[float]:
         try:
             response = requests.post(
                 "http://localhost:11434/api/embeddings",
-                json={"model": "nomic-embed-text", "prompt": text},
+                json={"model": "qwen3-embedding:4b", "prompt": text},
                 timeout=30
             )
             response.raise_for_status()
-            return response.json().get('embedding', [])
+            embedding = response.json().get('embedding', [])
+            # Обрезать до 2000d (максимум для HNSW в pgvector)
+            if len(embedding) > 2000:
+                embedding = embedding[:2000]
+            return embedding
         except Exception:
             pass
     
     # Fallback: случайный вектор для тестирования
     import random
     random.seed(text)
-    return [random.uniform(-1, 1) for _ in range(768)]
+    return [random.uniform(-1, 1) for _ in range(2000)]
 
 
 def migrate_to_postgresql(etalons: List[Dict], vector_store: VectorStore):

@@ -1,6 +1,19 @@
 """
 Vector Store - PostgreSQL + pgvector адаптер.
 Хранит векторные представления классов с метаданными.
+
+Схема БД (nomenclature_v3.etalons):
+    - id SERIAL PRIMARY KEY
+    - class_name TEXT
+    - example_name TEXT (наименование)
+    - unit TEXT
+    - status TEXT
+    - attributes JSONB
+    - attribute_specs JSONB
+    - embedding VECTOR(1536)
+    - excel_row INTEGER
+    - created_at TIMESTAMP
+    - code TEXT
 """
 
 import json
@@ -15,7 +28,7 @@ from psycopg2.extras import Json
 class VectorRecord:
     """Запись в векторном хранилище."""
     code: str
-    name: str
+    name: str  # соответствует example_name в БД
     class_name: str
     attributes: Dict[str, Any]
     embedding: List[float]
@@ -34,26 +47,15 @@ class VectorRecord:
 
 class VectorStore:
     """
-    PostgreSQL + pgvector store for classification embeddings.
-    
-    Schema:
-        CREATE TABLE classifications (
-            code TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            class_name TEXT NOT NULL,
-            attributes JSONB,
-            embedding VECTOR(768)
-        );
-        
-        CREATE INDEX idx_classifications_embedding ON classifications 
-        USING hnsw (embedding vector_cosine_ops);
+    PostgreSQL + pgvector store для эмбеддингов номенклатуры.
+    Использует таблицу etalons (1017 классов, 2560d vectors для qwen3).
     """
     
     def __init__(
         self,
         host: str = "localhost",
         port: int = 5432,
-        database: str = "nomenclature_kb",
+        database: str = "nomenclature_v3",
         user: str = "postgres",
         password: str = ""
     ):
@@ -77,34 +79,22 @@ class VectorStore:
         return self._conn
     
     def init_schema(self):
-        """Инициализировать схему БД."""
+        """Инициализировать схему БД (существующая таблица etalons)."""
         conn = self._get_connection()
         cur = conn.cursor()
         
-        # Создать расширение pgvector
+        # Создать расширение pgvector если нужно
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         
-        # Создать таблицу
+        # Создать индексы если их нет
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS classifications (
-                code TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                class_name TEXT NOT NULL,
-                attributes JSONB DEFAULT '{}',
-                embedding VECTOR(768)
-            );
+            CREATE INDEX IF NOT EXISTS idx_etalons_embedding 
+            ON etalons USING hnsw (embedding vector_cosine_ops);
         """)
         
-        # Создать HNSW индекс
         cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_classifications_embedding 
-            ON classifications USING hnsw (embedding vector_cosine_ops);
-        """)
-        
-        # Индексы для фильтрации
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_classifications_class 
-            ON classifications (class_name);
+            CREATE INDEX IF NOT EXISTS idx_etalons_class 
+            ON etalons (class_name);
         """)
         
         conn.commit()
@@ -118,7 +108,7 @@ class VectorStore:
         attributes: Dict,
         embedding: List[float]
     ):
-        """Добавить новую запись."""
+        """Добавить новую запись (для обратной совместимости с migrate_excel.py)."""
         conn = self._get_connection()
         cur = conn.cursor()
         
@@ -126,10 +116,10 @@ class VectorStore:
         embedding_str = '[' + ','.join(map(str, embedding)) + ']'
         
         cur.execute("""
-            INSERT INTO classifications (code, name, class_name, attributes, embedding)
+            INSERT INTO etalons (code, example_name, class_name, attributes, embedding)
             VALUES (%s, %s, %s, %s, %s::vector)
             ON CONFLICT (code) DO UPDATE SET
-                name = EXCLUDED.name,
+                example_name = EXCLUDED.example_name,
                 class_name = EXCLUDED.class_name,
                 attributes = EXCLUDED.attributes,
                 embedding = EXCLUDED.embedding;
@@ -148,7 +138,7 @@ class VectorStore:
         Поиск k ближайших соседей.
         
         Args:
-            embedding: Вектор запроса
+            embedding: Вектор запроса (2000d для qwen3)
             k: Количество результатов
             class_filter: Опциональная фильтрация по классу
             
@@ -163,7 +153,7 @@ class VectorStore:
         if class_filter:
             # Поиск с фильтром по классу
             cur.execute("""
-                SELECT code, name, class_name, attributes, embedding,
+                SELECT code, example_name, class_name, attributes, embedding,
                        1 - (embedding <=> %s::vector) as similarity
                 FROM etalons
                 WHERE class_name = %s
@@ -173,7 +163,7 @@ class VectorStore:
         else:
             # Поиск без фильтра
             cur.execute("""
-                SELECT code, name, class_name, attributes, embedding,
+                SELECT code, example_name, class_name, attributes, embedding,
                        1 - (embedding <=> %s::vector) as similarity
                 FROM etalons
                 ORDER BY embedding <=> %s::vector
@@ -182,14 +172,14 @@ class VectorStore:
         
         results = []
         for row in cur.fetchall():
-            code, name, class_name, attrs, emb, similarity = row
+            code, example_name, class_name, attrs, emb, similarity = row
             results.append(VectorRecord(
-                code=code,
-                name=name,
-                class_name=class_name,
-                attributes=attrs if isinstance(attrs, dict) else json.loads(attrs),
+                code=code or '',
+                name=example_name or '',
+                class_name=class_name or '',
+                attributes=attrs if isinstance(attrs, dict) else (json.loads(attrs) if attrs else {}),
                 embedding=emb,
-                similarity=float(similarity)
+                similarity=float(similarity or 0)
             ))
         
         cur.close()
@@ -201,8 +191,8 @@ class VectorStore:
         cur = conn.cursor()
         
         cur.execute("""
-            SELECT code, name, class_name, attributes, embedding
-            FROM classifications
+            SELECT code, example_name, class_name, attributes, embedding
+            FROM etalons
             WHERE code = %s;
         """, (code,))
         
@@ -210,12 +200,12 @@ class VectorStore:
         cur.close()
         
         if row:
-            code, name, class_name, attrs, emb = row
+            code, example_name, class_name, attrs, emb = row
             return VectorRecord(
-                code=code,
-                name=name,
-                class_name=class_name,
-                attributes=attrs if isinstance(attrs, dict) else json.loads(attrs),
+                code=code or '',
+                name=example_name or '',
+                class_name=class_name or '',
+                attributes=attrs if isinstance(attrs, dict) else (json.loads(attrs) if attrs else {}),
                 embedding=emb
             )
         return None
@@ -235,7 +225,7 @@ class VectorStore:
         """Общее количество записей."""
         conn = self._get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM classifications;")
+        cur.execute("SELECT COUNT(*) FROM etalons;")
         count = cur.fetchone()[0]
         cur.close()
         return count
@@ -245,10 +235,10 @@ class VectorStore:
         conn = self._get_connection()
         cur = conn.cursor()
         
-        cur.execute("SELECT COUNT(DISTINCT class_name) FROM classifications;")
+        cur.execute("SELECT COUNT(DISTINCT class_name) FROM etalons;")
         class_count = cur.fetchone()[0]
         
-        cur.execute("SELECT COUNT(*) FROM classifications WHERE embedding IS NOT NULL;")
+        cur.execute("SELECT COUNT(*) FROM etalons WHERE embedding IS NOT NULL;")
         with_embedding = cur.fetchone()[0]
         
         cur.close()
@@ -258,77 +248,3 @@ class VectorStore:
             'unique_classes': class_count,
             'with_embeddings': with_embedding
         }
-    
-    def bulk_import_from_jsonl(
-        self,
-        jsonl_path: Path,
-        embedding_fn = None
-    ):
-        """
-        Импорт из JSONL файла.
-        
-        Args:
-            jsonl_path: Путь к файлу с записями
-            embedding_fn: Функция для генерации embeddings (name -> vector)
-        """
-        import ollama
-        
-        conn = self._get_connection()
-        cur = conn.cursor()
-        
-        batch = []
-        batch_size = 100
-        
-        with open(jsonl_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                
-                record = json.loads(line)
-                code = record.get('code', '')
-                name = record.get('name', '')
-                class_name = record.get('class', '')
-                attributes = {k: v for k, v in record.items() 
-                             if k not in ['code', 'name', 'class']}
-                
-                # Генерировать embedding
-                if embedding_fn:
-                    embedding = embedding_fn(name)
-                else:
-                    # Fallback: случайный вектор
-                    import random
-                    random.seed(name)
-                    embedding = [random.uniform(-1, 1) for _ in range(768)]
-                
-                embedding_str = '[' + ','.join(map(str, embedding)) + ']'
-                
-                batch.append((code, name, class_name, Json(attributes), embedding_str))
-                
-                if len(batch) >= batch_size:
-                    cur.executemany("""
-                        INSERT INTO classifications (code, name, class_name, attributes, embedding)
-                        VALUES (%s, %s, %s, %s, %s::vector)
-                        ON CONFLICT (code) DO UPDATE SET
-                            name = EXCLUDED.name,
-                            class_name = EXCLUDED.class_name,
-                            attributes = EXCLUDED.attributes,
-                            embedding = EXCLUDED.embedding;
-                    """, batch)
-                    conn.commit()
-                    batch = []
-        
-        # Остаток
-        if batch:
-            cur.executemany("""
-                INSERT INTO classifications (code, name, class_name, attributes, embedding)
-                VALUES (%s, %s, %s, %s, %s::vector)
-                ON CONFLICT (code) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    class_name = EXCLUDED.class_name,
-                    attributes = EXCLUDED.attributes,
-                    embedding = EXCLUDED.embedding;
-            """, batch)
-            conn.commit()
-        
-        cur.close()
-        print(f"Imported {self.count()} records")

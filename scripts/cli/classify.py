@@ -15,8 +15,10 @@ from pathlib import Path
 
 # Добавляем путь к core
 sys.path.insert(0, str(Path(__file__).parent.parent / 'scripts'))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core import SemanticRouter, ClassificationRequest, VectorStore
+from core.semantic_router_v3 import SemanticClassifierV3
+from core.vector_store import VectorStore
 
 
 def format_result(result, verbose=False) -> str:
@@ -69,7 +71,7 @@ def main():
     
     # Инициализация
     vector_store = VectorStore()
-    router = SemanticRouter(vector_store=vector_store)
+    router = SemanticClassifierV3(vector_store=vector_store)
     
     # Инициализация БД
     if args.init_db:
@@ -86,8 +88,7 @@ def main():
     
     # Обработка одного наименования
     if args.name:
-        request = ClassificationRequest(name=args.name, code=args.code)
-        result = router.classify(request)
+        result = router.classify(code=args.code, name=args.name)
         print(format_result(result, verbose=args.verbose))
         return 0
     
@@ -102,11 +103,10 @@ def main():
         for i, item in enumerate(items, 1):
             print(f"  {i}/{len(items)}: {item.get('name', 'N/A')[:40]}...", end=' ')
             
-            request = ClassificationRequest(
-                name=item.get('name', ''),
-                code=item.get('code', '')
+            result = router.classify(
+                code=item.get('code', ''),
+                name=item.get('name', '')
             )
-            result = router.classify(request)
             
             results.append({
                 'code': result.code,
