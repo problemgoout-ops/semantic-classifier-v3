@@ -536,21 +536,27 @@ class AttributeExtractorV3:
         
         prompt = f"""Класс материала: "{class_name}"
 
-Вот примеры эталонов этого класса и их характеристики:
+Вот примеры эталонов этого класса (формат для справки):
 
 {json.dumps(examples, ensure_ascii=False, indent=2)}
 
 ---
 Новое название: "{name}"
 
-Задача: извлеки характеристики из нового названия в ТОЧНО таком же формате как у эталонов выше.
-Используй ТОЛЬКО те значения, которые явно есть в названии.
-Ключи атрибутов бери из эталонов (не придумывай новые).
-Формат ответа: только JSON словарь с характеристиками.
+Задача: извлеки характеристики из нового названия в ТОЧНО таком же формате как у эталонов.
 
+ВАЖНО:
+- Используй ТОЛЬКО те значения, которые ЯВНО есть в названии.
+- Не додумывай и не предполагай значения которых нет в тексте.
+- Ключи бери из эталонов (не выдумывай новые).
+- Если характеристика не указана в названии — не включай её.
+
+ФОРМАТ РАЗМЕРОВ:
+- ДВА числа через х (например 302x302) → одна характеристика "Размеры": "302x302"
+- ТРИ числа через х (например 400х1200х10) → три характеристики: "Длина", "Ширина", "Толщина" по отдельности
+
+Формат ответа: ТОЛЬКО JSON словарь с характеристиками, без markdown, без вложенных структур.
 Пример ответа: {{"Толщина": "80", "Цвет": "серый"}}
-
-Если характеристика не указана в названии — не включай её.
 Ответ:"""
 
         api_key = os.getenv('OPENAI_API_KEY', '')
@@ -572,12 +578,19 @@ class AttributeExtractorV3:
                     raw = raw[4:]
                 raw = raw.strip()
             result = json.loads(raw)
-            # Unwrap if LLM nested everything under a single key (e.g. "характеристики": {...})
-            if isinstance(result, dict) and len(result) == 1:
-                only_key = list(result.keys())[0]
-                inner = result[only_key]
-                if isinstance(inner, dict) and len(inner) > 1:
-                    return inner
+            # Unwrap if LLM nested everything under 'характеристики' or similar wrapper key
+            if isinstance(result, dict):
+                for key in list(result.keys()):
+                    if key.lower() in ('характеристики', 'attributes', 'атрибуты', 'characteristics'):
+                        inner = result[key]
+                        if isinstance(inner, dict) and len(inner) > 0:
+                            return inner
+                # Also unwrap single-key dict
+                if len(result) == 1:
+                    only_key = list(result.keys())[0]
+                    inner = result[only_key]
+                    if isinstance(inner, dict) and len(inner) > 1:
+                        return inner
             return result
         except Exception:
             return None
