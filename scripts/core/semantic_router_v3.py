@@ -130,9 +130,10 @@ class SemanticClassifierV3:
             return self._embedding_cache[text]
         
         from openai import OpenAI
+        import os
         
-        # API ключ (жёстко прописан для reliability)
-        api_key = "${OPENAI_API_KEY}"
+        # API ключ из окружения
+        api_key = os.getenv('OPENAI_API_KEY', '')
         
         try:
             client = OpenAI(api_key=api_key)
