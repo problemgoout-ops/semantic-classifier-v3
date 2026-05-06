@@ -18,9 +18,16 @@ Attribute Extractor v3 - извлечение атрибутов из наиме
 
 import re
 import json
+import os
 import psycopg2
 from typing import Dict, List, Any, Optional, Tuple
 from collections import defaultdict
+
+try:
+    from openai import OpenAI
+    _OPENAI_AVAILABLE = True
+except ImportError:
+    _OPENAI_AVAILABLE = False
 
 
 class AttributeExtractorV3:
@@ -321,33 +328,22 @@ class AttributeExtractorV3:
         detected_class: str
     ) -> Dict[str, Any]:
         """
-        Извлечь ВСЕ атрибуты из наименования.
+        Извлечь атрибуты из наименования через LLM.
         
-        1. Получить спецификацию класса
-        2. Выучить маппинг из соседей
-        3. Извлечь значения regex
-        4. Сопоставить со спецификацией через маппинг из соседей
-        5. Распределить оставшиеся слова
+        Алгоритм:
+        1. Загрузить эталоны данного класса из БД (с заполненными атрибутами)
+        2. Отдать LLM эталоны как примеры + новое название
+        3. LLM возвращает атрибуты в том же формате
+        
+        Fallback: если OpenAI недоступен — использовать старый regex-подход.
         """
-        # Шаг 1: Спецификация
-        spec = self.get_spec(detected_class)
+        if _OPENAI_AVAILABLE:
+            llm_attrs = self._extract_with_llm(name, detected_class)
+            if llm_attrs:
+                return llm_attrs
         
-        # Шаг 2: Маппинг из соседей
-        neighbor_map = self._learn_from_neighbors(neighbors, detected_class)
-        
-        # Шаг 3: Извлечь regex
-        extracted = self._extract_all(name)
-        
-        # Шаг 4: Распределить по спецификации
-        if spec:
-            attributes = self._map_to_spec(extracted, spec, name, neighbor_map, neighbors, detected_class)
-        else:
-            attributes = {}
-            for ext_type, (value, span) in extracted.items():
-                key = self.spec_mapping.get(ext_type, ext_type)
-                attributes[key] = value
-        
-        return attributes
+        # Fallback: старый regex-подход
+        return self._extract_fallback(name, neighbors, detected_class)
     
     def _extract_all(self, name: str) -> Dict[str, Tuple[str, Tuple[int,int]]]:
         """Извлечь все значения из текста с их позициями."""
@@ -523,6 +519,99 @@ class AttributeExtractorV3:
         # НЕ добавляем — принцип "только из входного текста"
         
         return attributes
+    
+    def _extract_with_llm(self, name: str, class_name: str) -> Optional[Dict[str, Any]]:
+        """Извлечь атрибуты через LLM, используя эталоны класса как примеры."""
+        etalons = self._get_etalons_with_attrs(class_name, limit=10)
+        if not etalons:
+            return None
+        
+        examples = []
+        for ename, eattrs in etalons:
+            attrs_obj = eattrs if isinstance(eattrs, dict) else (json.loads(str(eattrs)) if eattrs else {})
+            examples.append({
+                "название": ename,
+                "характеристики": attrs_obj
+            })
+        
+        prompt = f"""Класс материала: "{class_name}"
+
+Вот примеры эталонов этого класса и их характеристики:
+
+{json.dumps(examples, ensure_ascii=False, indent=2)}
+
+---
+Новое название: "{name}"
+
+Задача: извлеки характеристики из нового названия в ТОЧНО таком же формате как у эталонов выше.
+Используй ТОЛЬКО те значения, которые явно есть в названии.
+Ключи атрибутов бери из эталонов (не придумывай новые).
+Формат ответа: только JSON словарь с характеристиками.
+
+Пример ответа: {{"Толщина": "80", "Цвет": "серый"}}
+
+Если характеристика не указана в названии — не включай её.
+Ответ:"""
+
+        api_key = os.getenv('OPENAI_API_KEY', '')
+        if not api_key:
+            return None
+        
+        try:
+            client = OpenAI(api_key=api_key)
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=500
+            )
+            raw = resp.choices[0].message.content.strip()
+            if '```' in raw:
+                raw = raw.split('```')[1]
+                if raw.startswith('json'):
+                    raw = raw[4:]
+                raw = raw.strip()
+            return json.loads(raw)
+        except Exception:
+            return None
+    
+    def _get_etalons_with_attrs(self, class_name: str, limit: int = 10) -> List:
+        """Достать эталоны класса с заполненными атрибутами."""
+        try:
+            conn = psycopg2.connect(host='localhost', database='nomenclature_v3', user='postgres', password='')
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT example_name, attributes FROM etalons 
+                WHERE class_name = %s AND attributes IS NOT NULL AND attributes::text <> '{}'::text
+                ORDER BY RANDOM()
+                LIMIT %s
+            """, (class_name, limit))
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+            return rows
+        except Exception:
+            return []
+    
+    def _extract_fallback(
+        self,
+        name: str,
+        neighbors: List,
+        detected_class: str
+    ) -> Dict[str, Any]:
+        """Fallback: старый regex-подход если LLM недоступен."""
+        spec = self.get_spec(detected_class)
+        neighbor_map = self._learn_from_neighbors(neighbors, detected_class)
+        extracted = self._extract_all(name)
+        
+        if spec:
+            return self._map_to_spec(extracted, spec, name, neighbor_map, neighbors, detected_class)
+        else:
+            attributes = {}
+            for ext_type, (value, span) in extracted.items():
+                key = self.spec_mapping.get(ext_type, ext_type)
+                attributes[key] = value
+            return attributes
     
     def _get_remaining_words(
         self,
