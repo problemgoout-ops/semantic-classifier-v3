@@ -571,7 +571,14 @@ class AttributeExtractorV3:
                 if raw.startswith('json'):
                     raw = raw[4:]
                 raw = raw.strip()
-            return json.loads(raw)
+            result = json.loads(raw)
+            # Unwrap if LLM nested everything under a single key (e.g. "характеристики": {...})
+            if isinstance(result, dict) and len(result) == 1:
+                only_key = list(result.keys())[0]
+                inner = result[only_key]
+                if isinstance(inner, dict) and len(inner) > 1:
+                    return inner
+            return result
         except Exception:
             return None
     
