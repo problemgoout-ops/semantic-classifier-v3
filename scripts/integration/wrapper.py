@@ -105,7 +105,7 @@ if __name__ == "__main__":
             attrs = json.loads(args.attributes)
         except json.JSONDecodeError:
             attrs = {}
-        result = confirm_and_learn(args.name, args.class_name, attrs)
+        result = confirm_and_learn(args.name, args.class_name, attrs, args.source)
         print(json.dumps(result, ensure_ascii=False))
     else:
         result = classify_item(args.name, args.code)
