@@ -307,3 +307,54 @@ class SemanticClassifierV3:
     ):
         """Добавить feedback для дообучения (устаревший API)."""
         self.confirm_and_learn(name, user_class, user_attributes)
+    
+    def feedback_correct_class(self, name: str, user_class: str) -> dict:
+        """
+        Исправить класс по указанию пользователя.
+        НЕ записывает в БД. Возвращает правильный результат.
+        """
+        # Нормализуем класс
+        normalized_class = user_class.strip()
+        if normalized_class and normalized_class[0].islower():
+            normalized_class = normalized_class[0].upper() + normalized_class[1:]
+        
+        # Получаем эталоны правильного класса
+        neighbors = self.vector_store.search_by_class(normalized_class, k=5)
+        
+        # Извлекаем атрибуты через LLM с эталонами правильного класса
+        attributes = self.attribute_extractor.extract(name, neighbors, normalized_class)
+        
+        return {
+            'name': name,
+            'class_name': normalized_class,
+            'attributes': attributes,
+            'confidence': 1.0,
+            'source': 'user_corrected',
+            'note': 'Класс исправлен пользователем'
+        }
+    
+    def feedback_correct_attributes(self, name: str, user_class: str, user_attributes: Dict) -> dict:
+        """
+        Исправить атрибуты по указанию пользователя.
+        user_attributes: {attr_name: correct_value}
+        НЕ записывает в БД.
+        """
+        normalized_class = user_class.strip()
+        if normalized_class and normalized_class[0].islower():
+            normalized_class = normalized_class[0].upper() + normalized_class[1:]
+        
+        # Проверяем что атрибуты соответствуют спецификации класса
+        spec = self.attribute_extractor.get_spec(normalized_class) if hasattr(self.attribute_extractor, 'get_spec') else []
+        if spec and user_attributes:
+            valid_attrs = {k: v for k, v in user_attributes.items() if k in spec}
+        else:
+            valid_attrs = user_attributes
+        
+        return {
+            'name': name,
+            'class_name': normalized_class,
+            'attributes': valid_attrs,
+            'confidence': 1.0,
+            'source': 'user_corrected_attrs',
+            'note': 'Атрибуты исправлены пользователем'
+        }

@@ -248,3 +248,30 @@ class VectorStore:
             'unique_classes': class_count,
             'with_embeddings': with_embedding
         }
+
+    def search_by_class(self, class_name: str, k: int = 5) -> List[VectorRecord]:
+        """Получить эталоны указанного класса (для feedback flow — когда пользователь исправляет класс)."""
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, class_name, example_name, unit, status, attributes, attribute_specs, embedding, excel_row, code, created_at
+                    FROM etalons
+                    WHERE class_name = %s AND attributes IS NOT NULL AND attributes::text <> '{}'::text
+                    ORDER BY RANDOM()
+                    LIMIT %s
+                """, (class_name, k))
+                results = []
+                for row in cur.fetchall():
+                    results.append(VectorRecord(
+                        id=row[0], class_name=row[1], name=row[2], unit=row[3],
+                        status=row[4], attributes=row[5], attribute_specs=row[6],
+                        embedding=row[7], excel_row=row[8], code=row[9], created_at=row[10],
+                        similarity=0.0
+                    ))
+                return results
+        except Exception as e:
+            print(f"[VectorStore] search_by_class error: {e}")
+            return []
+        finally:
+            conn.close()

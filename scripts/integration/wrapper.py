@@ -50,6 +50,24 @@ def classify_item(name: str, code: str = "") -> dict:
     }
 
 
+def correct_class(name: str, class_name: str) -> dict:
+    """
+    Исправить класс по указанию пользователя.
+    НЕ записывает в БД. Использует эталоны правильного класса для извлечения атрибутов.
+    """
+    classifier = SemanticClassifierV3()
+    return classifier.feedback_correct_class(name, class_name)
+
+
+def correct_attributes(name: str, class_name: str, attributes: dict) -> dict:
+    """
+    Исправить атрибуты по указанию пользователя.
+    НЕ записывает в БД. Проверяет что атрибуты соответствуют спецификации класса.
+    """
+    classifier = SemanticClassifierV3()
+    return classifier.feedback_correct_attributes(name, class_name, attributes)
+
+
 def confirm_and_learn(name: str, class_name: str, attributes: dict = None) -> dict:
     """
     Подтвердить результат и дообучить классификатор.
