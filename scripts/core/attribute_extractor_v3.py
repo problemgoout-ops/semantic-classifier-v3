@@ -294,7 +294,15 @@ class AttributeExtractorV3:
         
         # Строим маппинг: значение атрибута → имя атрибута
         for name, attrs in all_examples:
+            # Весовой коэффициент: user_confirmed = 3x, остальные = 1x
+            source = attrs.get('__source', 'auto') if isinstance(attrs, dict) else 'auto'
+            weight = 3 if source == 'user_confirmed' else 1
+            
             for attr_name, attr_value in attrs.items():
+                # Пропускаем служебные поля
+                if attr_name.startswith('__'):
+                    continue
+                    
                 if not attr_value or str(attr_value) == 'Нет':
                     continue
                 
@@ -302,13 +310,13 @@ class AttributeExtractorV3:
                 
                 # Полное значение как фраза
                 if val_str and val_str in name:
-                    word_to_attr[val_str][attr_name] += 1
+                    word_to_attr[val_str][attr_name] += weight
                 
                 # Отдельные слова значения
                 for word in val_str.split():
                     word = word.strip('.,;:')
                     if len(word) >= 2 and word in name:
-                        word_to_attr[word][attr_name] += 1
+                        word_to_attr[word][attr_name] += weight
         
         # Выбрать наиболее частый атрибут для каждого слова
         mapping = {}

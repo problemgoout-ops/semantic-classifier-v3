@@ -10,6 +10,7 @@ Semantic Classifier v3 - Core classification engine.
 
 import json
 import re
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any, Tuple
 from pathlib import Path
@@ -270,7 +271,8 @@ class SemanticClassifierV3:
         self,
         name: str,
         class_name: str,
-        attributes: Dict[str, Any] = None
+        attributes: Dict[str, Any] = None,
+        source: str = None
     ):
         """
         Подтвердить результат и записать в базу для дообучения.
@@ -282,6 +284,12 @@ class SemanticClassifierV3:
         if attributes is None:
             attributes = {}
         
+        # Добавляем метаинформацию о подтверждении в атрибуты
+        enriched_attributes = dict(attributes)
+        if source:
+            enriched_attributes['__source'] = source
+            enriched_attributes['__confirmed_at'] = datetime.now().isoformat()
+        
         import hashlib
         code = f"learn_{hashlib.md5(name.encode()).hexdigest()[:12]}"
         
@@ -291,7 +299,7 @@ class SemanticClassifierV3:
             code=code,
             name=name,
             class_name=class_name,
-            attributes=attributes,
+            attributes=enriched_attributes,
             embedding=embedding
         )
         

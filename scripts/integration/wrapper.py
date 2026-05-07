@@ -68,7 +68,7 @@ def correct_attributes(name: str, class_name: str, attributes: dict) -> dict:
     return classifier.feedback_correct_attributes(name, class_name, attributes)
 
 
-def confirm_and_learn(name: str, class_name: str, attributes: dict = None) -> dict:
+def confirm_and_learn(name: str, class_name: str, attributes: dict = None, source: str = None) -> dict:
     """
     Подтвердить результат и дообучить классификатор.
     Записывает пример в базу эталонов с атрибутами.
@@ -76,13 +76,13 @@ def confirm_and_learn(name: str, class_name: str, attributes: dict = None) -> di
     if attributes is None:
         attributes = {}
     
-    # Нормализация: title case для класса ("шкаф распределительный" → "Шкаф распределительный")
+    # Нормализация: title case для класса
     normalized_class = class_name.strip()
     if normalized_class and normalized_class[0].islower():
         normalized_class = normalized_class[0].upper() + normalized_class[1:]
     
     classifier = SemanticClassifierV3()
-    classifier.confirm_and_learn(name=name, class_name=normalized_class, attributes=attributes)
+    classifier.confirm_and_learn(name=name, class_name=normalized_class, attributes=attributes, source=source)
     return {'status': 'ok', 'class_name': normalized_class}
 
 
@@ -94,6 +94,7 @@ if __name__ == "__main__":
     parser.add_argument('--learn', action='store_true', help='Режим дообучения (требует --class)')
     parser.add_argument('--class', dest='class_name', help='Имя класса для дообучения')
     parser.add_argument('--attributes', default='{}', help='Атрибуты в формате JSON')
+    parser.add_argument('--source', default=None, help='Источник подтверждения (например, user_confirmed)')
     args = parser.parse_args()
     
     if args.learn:
